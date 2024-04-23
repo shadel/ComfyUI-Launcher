@@ -16,6 +16,11 @@ RUN pip install -r /app/requirements.txt
 COPY web /app/web
 RUN cd /app/web && npm install && npm run build
 
+COPY import /app/import
+WORKDIR /app/import
+
+RUN python import.py
+
 COPY server /app/server
 
 # Copy the Nginx configuration file into the container
@@ -23,4 +28,6 @@ COPY nginx.conf /etc/nginx/nginx.conf.template
 
 WORKDIR /app/server
 
+RUN chmod 755 entrypoint.sh
+RUN sed -i -e 's/\r$//' entrypoint.sh
 CMD ["./entrypoint.sh"] 

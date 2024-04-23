@@ -1,0 +1,29 @@
+version: "3.8"
+# Compose file build variables set in .env
+services:
+
+  launcher-serverless:
+    build:
+      context: ./
+      dockerfile: ./Dockerfile
+    image: shadel/comfyui_launcher
+    
+    ## For Nvidia GPU's - You probably want to uncomment this
+    deploy:
+     resources:
+       reservations:
+         devices:
+           - driver: nvidia
+             count: all
+             capabilities: [gpu]
+    
+    devices:
+      - "/dev/dri:/dev/dri"
+    volumes:
+      - ./local/Comfyui/models:/app/server/models
+      # - ./local/comfyui_launcher_projects2:/app/server/projects
+    ports:
+        - 4000-4100:4000-4100
+    profiles:
+      - launcher
+    # entrypoint: "ls ./projects"

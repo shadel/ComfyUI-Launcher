@@ -263,8 +263,6 @@ def import_project():
 
 @app.route("/api/projects/<id>/start", methods=["POST"])
 def start_project(id):
-
-    print(f"Project with id {id} start")
     project_path = os.path.join(PROJECTS_DIR, id)
     assert os.path.exists(project_path), f"Project with id {id} does not exist"
 
@@ -316,60 +314,6 @@ def start_project(id):
     )
     return jsonify({"success": True, "port": port})
 
-def start_project_command(id):
-
-    print(f"Project with id {id} start")
-    project_path = os.path.join(PROJECTS_DIR, id)
-    assert os.path.exists(project_path), f"Project with id {id} does not exist"
-
-    launcher_state, _ = get_launcher_state(project_path)
-    assert launcher_state
-
-    # assert launcher_state["state"] == "ready", f"Project with id {id} is not ready yet"
-
-    # find a free port
-    port = get_project_port(id)
-    assert port, "No free port found"
-    assert not is_port_in_use(port), f"Port {port} is already in use"
-
-    # # start the project
-    # pid = run_command_in_project_comfyui_venv(
-    #     project_path, f"python main.py --port {port}", in_bg=True
-    # )
-    # assert pid, "Failed to start the project"
-
-    # start the project
-    command = f"python main.py --port {port} --listen 0.0.0.0"
-
-    # check if gpus are available, if they aren't, use the cpu
-    mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-    if not torch.cuda.is_available() and not mps_available:
-        print("WARNING: No GPU/MPS detected, so launching ComfyUI with CPU...")
-        command += " --cpu"
-
-    if os.name == "nt":
-        command = f"start \"\" cmd /c \"{command}\""
-    
-    print(f"USING COMMAND: {command}. PORT: {port}")
-
-    pid = run_command_in_project_comfyui_venv(
-        project_path, command, in_bg=True
-    )
-    assert pid, "Failed to start the project"
-
-    # wait until the port is bound
-    max_wait_secs = 60
-    while max_wait_secs > 0:
-        max_wait_secs -= 1
-        if is_port_in_use(port):
-            break
-        time.sleep(1)
-
-    set_launcher_state_data(
-        project_path, {"state": "running", "status_message" : "Running...", "port": port, "pid": pid}
-    )
-    return json.dumps({"success": True, "port": port})
-
 
 @app.route("/api/projects/<id>/stop", methods=["POST"])
 def stop_project(id):
@@ -394,30 +338,6 @@ def stop_project(id):
 
     set_launcher_state_data(project_path, {"state": "ready", "status_message" : "Ready", "port": None, "pid": None})
     return jsonify({"success": True})
-
-def stop_project_command(id):
-    project_path = os.path.join(PROJECTS_DIR, id)
-    assert os.path.exists(project_path), f"Project with id {id} does not exist"
-
-    launcher_state, _ = get_launcher_state(project_path)
-    assert launcher_state
-
-    assert launcher_state["state"] == "running", f"Project with id {id} is not running"
-
-    # kill the process with the pid
-    try:
-        pid = launcher_state["pid"]
-        parent_pid = pid
-        parent = psutil.Process(parent_pid)
-        for child in parent.children(recursive=True):
-            child.terminate()
-        parent.terminate()
-    except:
-        pass
-
-    set_launcher_state_data(project_path, {"state": "ready", "status_message" : "Ready", "port": None, "pid": None})
-    return json.dumps({"success": True})
-
 
 
 @app.route("/api/projects/<id>/delete", methods=["POST"])
@@ -459,5 +379,5 @@ if __name__ == "__main__":
     if not os.path.exists(CONFIG_FILEPATH):
         set_config(DEFAULT_CONFIG)
     print(f"Open http://localhost:{SERVER_PORT} in your browser.")
-    start_project_command("test")
     app.run(host="0.0.0.0", debug=False, port=SERVER_PORT)
+    start_project("test")

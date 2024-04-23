@@ -141,10 +141,10 @@ def api_set_config():
 
 @app.route("/api/create_project", methods=["POST"])
 def create_project():
-    request_data = request.get_json()
-    name = request_data["name"]
-    template_id = request_data.get("template_id", "empty")
-    port = request_data.get("port")
+    # request_data = request.get_json()
+    name = "test" # request_data["name"]
+    template_id = "img2img" # request_data.get("template_id", "empty")
+    port = 4001 # request_data.get("port")
 
     # set id to a folder friendly name of the project name (lowercase, no spaces, etc.)
     id = slugify(name)
@@ -157,6 +157,14 @@ def create_project():
     launcher_json = None
     template_folder = os.path.join(TEMPLATES_DIR, template_id)
     template_launcher_json_fp = os.path.join(template_folder, "launcher.json")
+
+
+
+    set_launcher_state_data(
+        PROJECTS_DIR,
+        { "template_folder": template_folder, "id": id, "project_path": project_path },
+    )
+
     if os.path.exists(template_launcher_json_fp):
         with open(template_launcher_json_fp, "r") as f:
             launcher_json = json.load(f)
@@ -169,7 +177,11 @@ def create_project():
             if (res["success"] and res["launcher_json"]):
                 launcher_json = res["launcher_json"]
             else:
-                return jsonify({ "success": False, "missing_models": [], "error": res["error"] })
+                set_launcher_state_data(
+                    PROJECTS_DIR,
+                    { "success": False, "missing_models": [], "error": res["error"] },
+                )
+                return json.dumps({ "success": False, "missing_models": [], "error": res["error"] })
     
     print(f"Creating project with id {id} and name {name} from template {template_id}")
 
@@ -183,14 +195,15 @@ def create_project():
         {"id":id,"name":name, "status_message": "Downloading ComfyUI...", "state": "download_comfyui"},
     )
 
-    result = create_comfyui_project.delay(
+    result = create_comfyui_project(
         project_path, models_path, id=id, name=name, launcher_json=launcher_json, port=port, create_project_folder=False
     )
 
-    with open(os.path.join(project_path, "setup_task_id.txt"), "w") as f:
-        f.write(result.id)
-    
-    return jsonify({"success": True, "id": id})
+    set_launcher_state_data(
+        PROJECTS_DIR,
+        {"success": True, "id": id},
+    )
+    return json.dumps({"success": True, "id": id})
 
 
 @app.route("/api/import_project", methods=["POST"])
@@ -258,206 +271,12 @@ def import_project():
     with open(os.path.join(project_path, "setup_task_id.txt"), "w") as f:
         f.write(result.id)
     
-    return jsonify({"success": True, "id": id}) 
-
-
-@app.route("/api/projects/<id>/start", methods=["POST"])
-def start_project(id):
-
-    print(f"Project with id {id} start")
-    project_path = os.path.join(PROJECTS_DIR, id)
-    assert os.path.exists(project_path), f"Project with id {id} does not exist"
-
-    launcher_state, _ = get_launcher_state(project_path)
-    assert launcher_state
-
-    assert launcher_state["state"] == "ready", f"Project with id {id} is not ready yet"
-
-    # find a free port
-    port = get_project_port(id)
-    assert port, "No free port found"
-    assert not is_port_in_use(port), f"Port {port} is already in use"
-
-    # # start the project
-    # pid = run_command_in_project_comfyui_venv(
-    #     project_path, f"python main.py --port {port}", in_bg=True
-    # )
-    # assert pid, "Failed to start the project"
-
-    # start the project
-    command = f"python main.py --port {port} --listen 0.0.0.0"
-
-    # check if gpus are available, if they aren't, use the cpu
-    mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-    if not torch.cuda.is_available() and not mps_available:
-        print("WARNING: No GPU/MPS detected, so launching ComfyUI with CPU...")
-        command += " --cpu"
-
-    if os.name == "nt":
-        command = f"start \"\" cmd /c \"{command}\""
-    
-    print(f"USING COMMAND: {command}. PORT: {port}")
-
-    pid = run_command_in_project_comfyui_venv(
-        project_path, command, in_bg=True
-    )
-    assert pid, "Failed to start the project"
-
-    # wait until the port is bound
-    max_wait_secs = 60
-    while max_wait_secs > 0:
-        max_wait_secs -= 1
-        if is_port_in_use(port):
-            break
-        time.sleep(1)
-
-    set_launcher_state_data(
-        project_path, {"state": "running", "status_message" : "Running...", "port": port, "pid": pid}
-    )
-    return jsonify({"success": True, "port": port})
-
-def start_project_command(id):
-
-    print(f"Project with id {id} start")
-    project_path = os.path.join(PROJECTS_DIR, id)
-    assert os.path.exists(project_path), f"Project with id {id} does not exist"
-
-    launcher_state, _ = get_launcher_state(project_path)
-    assert launcher_state
-
-    # assert launcher_state["state"] == "ready", f"Project with id {id} is not ready yet"
-
-    # find a free port
-    port = get_project_port(id)
-    assert port, "No free port found"
-    assert not is_port_in_use(port), f"Port {port} is already in use"
-
-    # # start the project
-    # pid = run_command_in_project_comfyui_venv(
-    #     project_path, f"python main.py --port {port}", in_bg=True
-    # )
-    # assert pid, "Failed to start the project"
-
-    # start the project
-    command = f"python main.py --port {port} --listen 0.0.0.0"
-
-    # check if gpus are available, if they aren't, use the cpu
-    mps_available = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-    if not torch.cuda.is_available() and not mps_available:
-        print("WARNING: No GPU/MPS detected, so launching ComfyUI with CPU...")
-        command += " --cpu"
-
-    if os.name == "nt":
-        command = f"start \"\" cmd /c \"{command}\""
-    
-    print(f"USING COMMAND: {command}. PORT: {port}")
-
-    pid = run_command_in_project_comfyui_venv(
-        project_path, command, in_bg=True
-    )
-    assert pid, "Failed to start the project"
-
-    # wait until the port is bound
-    max_wait_secs = 60
-    while max_wait_secs > 0:
-        max_wait_secs -= 1
-        if is_port_in_use(port):
-            break
-        time.sleep(1)
-
-    set_launcher_state_data(
-        project_path, {"state": "running", "status_message" : "Running...", "port": port, "pid": pid}
-    )
-    return json.dumps({"success": True, "port": port})
-
-
-@app.route("/api/projects/<id>/stop", methods=["POST"])
-def stop_project(id):
-    project_path = os.path.join(PROJECTS_DIR, id)
-    assert os.path.exists(project_path), f"Project with id {id} does not exist"
-
-    launcher_state, _ = get_launcher_state(project_path)
-    assert launcher_state
-
-    assert launcher_state["state"] == "running", f"Project with id {id} is not running"
-
-    # kill the process with the pid
-    try:
-        pid = launcher_state["pid"]
-        parent_pid = pid
-        parent = psutil.Process(parent_pid)
-        for child in parent.children(recursive=True):
-            child.terminate()
-        parent.terminate()
-    except:
-        pass
-
-    set_launcher_state_data(project_path, {"state": "ready", "status_message" : "Ready", "port": None, "pid": None})
-    return jsonify({"success": True})
-
-def stop_project_command(id):
-    project_path = os.path.join(PROJECTS_DIR, id)
-    assert os.path.exists(project_path), f"Project with id {id} does not exist"
-
-    launcher_state, _ = get_launcher_state(project_path)
-    assert launcher_state
-
-    assert launcher_state["state"] == "running", f"Project with id {id} is not running"
-
-    # kill the process with the pid
-    try:
-        pid = launcher_state["pid"]
-        parent_pid = pid
-        parent = psutil.Process(parent_pid)
-        for child in parent.children(recursive=True):
-            child.terminate()
-        parent.terminate()
-    except:
-        pass
-
-    set_launcher_state_data(project_path, {"state": "ready", "status_message" : "Ready", "port": None, "pid": None})
-    return json.dumps({"success": True})
-
-
-
-@app.route("/api/projects/<id>/delete", methods=["POST"])
-def delete_project(id):
-    project_path = os.path.join(PROJECTS_DIR, id)
-    assert os.path.exists(project_path), f"Project with id {id} does not exist"
-
-    # stop the celery task if it's running
-    setup_task_id_fp = os.path.join(project_path, "setup_task_id.txt")
-    if os.path.exists(setup_task_id_fp):
-        with open(setup_task_id_fp, "r") as f:
-            setup_task_id = f.read()
-            if setup_task_id:
-                try:
-                    celery_app.control.revoke(setup_task_id, terminate=True)
-                except:
-                    pass
-
-    # stop the project if it's running
-    launcher_state, _ = get_launcher_state(project_path)
-    if launcher_state and launcher_state["state"] == "running":
-        stop_project(id)
-
-    # delete the project folder and its contents
-    shutil.rmtree(project_path, ignore_errors=True)
-    return jsonify({"success": True})
-
-
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-@app.errorhandler(404)
-def index(path):
-    return render_template("index.html")
+    return json.dumps({"success": True, "id": id}) 
 
 if __name__ == "__main__":
-    print("Starting ComfyUI Launcher...")
     os.makedirs(PROJECTS_DIR, exist_ok=True)
     os.makedirs(MODELS_DIR, exist_ok=True)
     if not os.path.exists(CONFIG_FILEPATH):
         set_config(DEFAULT_CONFIG)
-    print(f"Open http://localhost:{SERVER_PORT} in your browser.")
-    start_project_command("test")
-    app.run(host="0.0.0.0", debug=False, port=SERVER_PORT)
+    print(f"Create project for empty workflow")
+    create_project()
